@@ -1,0 +1,77 @@
+#!/bin/sh
+# exitwith
+
+program=$(basename $0)
+dir=$(dirname $0)
+
+# general functions
+. $dir/common.sh
+
+# program specific functions
+do_usage() {
+  cat >&2 << EOF
+usage: ${program} [OPTIONS] exit-code
+       OPTIONS
+           [-v,--verbose]        verbose
+           [-h,--help]           help
+       exit-code                 integer to use as the exit code
+EOF
+    exit 1
+}
+
+# process command line args
+verbose=0
+action="main"
+args=""
+if ! checkvars action ; then
+    exit 1
+fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        (-v|--verbose)
+            verbose=$(($verbose + 1))
+            ;;
+        (-h|--help)
+            action="usage"
+            break
+            ;;
+        # (-*)
+        #     action="usage"
+        #     ;;
+        (*)
+            if [ -z "$args" ]; then
+                args="$1"
+            else
+                action="usage"
+            fi
+            ;;
+    esac
+    shift
+done
+if [ -z "$args" ]; then
+    action="usage"
+fi
+if [ "$action" != "main" ]; then
+    do_$action
+fi
+if [ $verbose -gt 0 ]; then
+    printvars program dir verbose args
+fi
+
+# main program
+if ! printf "%d" "$args" > /dev/null 2>&1 ; then
+    err "argument must be a non negative number"
+    do_usage
+fi
+
+rc=$(($args + 0))
+if [ $rc -lt 0 ]; then
+    err "argument must be a non negative number"
+    do_usage
+fi
+if [ $rc -gt 255 ]; then
+    err "warning: exit code will be argument $args modulo 256 = $(($rc % 256))"
+fi
+
+vverr exiting with $rc
+exit $rc

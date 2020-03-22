@@ -1,0 +1,120 @@
+#!/bin/sh
+# runtests
+# Runs a test in multiple directories, exits 1 on any failure
+# usage:
+#   runtests -c prog-or-script dir1 dir2 ....
+
+program=$(basename $0)
+dir=$(dirname $0)
+cwd=$(pwd -P)
+
+# general functions
+. $dir/common.sh
+
+# program specific functions
+do_usage() {
+  cat >&2 << EOF
+usage: ${program} [OPTIONS] DIRS
+       OPTIONS
+           [-v,--verbose]        verbose
+           [-h,--help]           help
+           [-c,--script] SCRIPT  prog-or-script
+       DIRS                      one or more directories to test
+EOF
+    exit 1
+}
+
+# process command line args
+verbose=0
+action="main"
+script=""
+args=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        (-v|--verbose)
+            verbose=$(($verbose + 1))
+            ;;
+        (-h|--help)
+            action="usage"
+            break
+            ;;
+        (-c|--script)
+            script="$1"
+            if [ $# -lt 2 ]; then
+                action="usage"
+            else
+                script="$2"
+                shift
+            fi
+            ;;
+        (-*)
+            err "${program}: invalid option: $1"
+            action="usage"
+            ;;
+        (*)
+            if [ -z "$args" ]; then
+                args="$1"
+            else
+                args="$args $1"
+            fi
+            ;;
+    esac
+    shift
+done
+if [ -z "$args" ] && [ "$action" = "main" ]; then
+    err "${program}: no DIRS provided"
+    action="usage"
+fi
+if [ "$action" != "main" ]; then
+    do_$action
+fi
+if [ -z "$script" ]; then
+    script="echo directory \$d \$(if [ -d \$d ]; then echo EXISTS; else exit 1; fi)"
+    verr "using default script: \"$script\""
+fi
+if [ $verbose -gt 0 ]; then
+    printvars program dir cwd verbose script args
+fi
+
+fail=0
+i=0
+for d in $args; do
+    verr ""
+    verr "-- testing directory $d ---"
+    if [ "/" != "$(echo $d | cut -c1)" ]; then
+        d="$cwd/$d"
+    fi
+    export d
+    export i
+    rc=0
+    if [ ! -d "$d" ]; then
+        err "directory $d does NOT exist"
+        rc=1
+    else
+        cd "$d"
+        if [ -x "$script" ]; then
+            if "./$script" ; then
+                rc=$?
+            fi
+        else
+            if sh -e -c "$script" ; then
+                rc=$?
+                echo "SUCCESS SCRIPT $rc"
+            else
+                rc=$?
+                echo "FAIL SCRIPT $rc"
+            fi
+        fi
+    fi
+    vverr "-- EXIT $rc --"
+    if [ $rc != "0" ]; then
+        fail=$(($fail + 1))
+    fi
+    cd "$cwd"
+    i=$(($i + 1))
+done
+
+verr ""
+verr "Ran $i tests: $(($i - $fail)) successes, $fail failures"
+vverr exiting with $fail
+exit $fail
