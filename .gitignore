@@ -1,0 +1,10 @@
+# .gitignore
+
+# Emacs backup files
+*~
+
+# Silly Mac Filesytems
+.DS_Store*
+._*
+.Spotlight-V100
+.Trash*
