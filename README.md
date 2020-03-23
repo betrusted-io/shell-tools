@@ -24,6 +24,24 @@ usage: runtests [OPTIONS] DIRS
        DIRS                      one or more directories to test
 ```
 
+### get-ci
+
+**get-ci** is a complement to your CI infrastructure. It can
+be used to track which submodules changed when a build failed.
+Typically you would run `get-ci --before` prior to running
+tests and `get-ci --after $?` after running tests.
+
+```
+usage: git-ci [OPTIONS]
+       OPTIONS
+           [-v,--verbose]        verbose
+           [-h,--help]           help
+           [-b,--before]         record versions before test
+           [-a,--after] RESULT   test result status
+           [-c,--changes]        show version changes
+           [-n,--notify]         send notifications on failure
+```
+
 ### exitwith
 
 ```

@@ -1,0 +1,213 @@
+#!/bin/sh
+# git-ci
+# Tracks changes in git (and submodules) between CI tests
+# usage:
+#   git-ci --before
+#   test....
+#   git-ci --after $? --notify
+
+program=$(basename $0)
+dir=$(dirname $0)
+cwd=$(pwd -P)
+
+# general functions
+. $dir/common.sh
+
+# program specific functions
+do_usage() {
+  cat >&2 << EOF
+usage: ${program} [OPTIONS]
+       OPTIONS
+           [-v,--verbose]        verbose
+           [-h,--help]           help
+           [-b,--before]         record versions before test
+           [-a,--after] RESULT   test result status
+           [-c,--changes]        show version changes
+           [-n,--notify]         send notifications on failure
+EOF
+    exit 1
+}
+
+
+# escape submodule name
+submodule_escape() {
+    echo "$1" | tr / %
+}
+
+# unescape submodule name
+submodule_unescape() {
+    echo "$1" | tr % /
+}
+
+# list submodules
+list_submodules() {
+    if [ -r ".gitmodules" ]; then
+        git config --file ".gitmodules" --get-regexp url | cut -d. -f2
+    fi
+}
+
+# before tests
+do_before() {
+    local current
+    local reffile
+    vverr "-- before --"
+    if [ ! -d ".git-ci" ]; then
+        mkdir ".git-ci"
+    fi
+    current=".git-ci/current"
+    if [ -d "$current" ]; then
+        rm -r "$current"
+    fi
+    mkdir "$current"
+    ref="$(git rev-parse @)"
+    reffile="$current/.ref"
+    echo "$ref" > "$reffile"
+    verr "PROJECT @ $ref "
+    for sub in $(list_submodules); do
+        safe=$(submodule_escape $sub)
+        ref="$(git -C $sub rev-parse @)"
+        reffile="$current/$safe.ref"
+        echo "$ref" > "$reffile"
+        verr "SUBMODULE $sub @ $ref "
+    done
+}
+
+
+# show changes
+do_changes() {
+    vverr "-- changes --"
+    local current
+    local prev
+    local url
+    current=".git-ci/current"
+    prev=".git-ci/prev"
+    if [ ! -d "$current" ]; then
+        verr 'no changes to show (did you run --before?)'
+    fi
+    if [ ! -d "$prev" ]; then
+        verr 'no changes to show (did you run --after?)'
+    fi
+    prev_ref="$(cat $prev/.ref)"
+    current_ref="$(cat $current/.ref)"
+    if [ "$current_ref" = "$prev_ref" ]; then
+        log "PROJECT UNCHANGED @ $current_ref"
+    else
+        log "PROJECT ${prev_ref}..${current_ref}"
+    fi
+    for sub in $(list_submodules); do
+        safe=$(submodule_escape $sub)
+        prev_ref="$(cat $prev/$safe.ref)"
+        current_ref="$(cat $current/$safe.ref)"
+        if [ "$current_ref" = "$prev_ref" ]; then
+            log "SUBMODULE $sub UNCHANGED @ $current_ref"
+        else
+            url="$(git config --file .gitmodules --get submodule.$sub.url | sed 's/.git$//')"
+            url="$url/compare/${prev_ref}..${current_ref}"
+            log "SUBMODULE $sub $url"
+        fi
+    done
+}
+
+# after tests
+do_after() {
+    local current
+    local prev
+    local prev_result
+    vverr "-- after $result --"
+    current=".git-ci/current"
+    if [ ! -d "$current" ]; then
+        do_before # forgot to run --before ?
+    fi
+    echo "$result" > "$current/.result"
+    prev=".git-ci/prev"
+    if [ -d "$prev" ]; then
+        prev_result="$(cat $prev/.result)"
+        if [ "$result" = "0" ]; then
+            if [ "$prev_result" = "0" ]; then
+                verr "still successful"
+            else
+                verr "build fixed"
+            fi
+        else
+            if [ "$prev_result" = "0" ]; then
+                verr "this build failed"
+                do_changes
+                if [ -n "$notify" ]; then
+                    verr "sending notifications..."
+                fi
+            else
+                verr "still failing"
+            fi
+        fi
+        rm -r "$prev"
+    else
+        verr "no previous results..."
+    fi
+    mv "$current" "$prev"
+}
+
+# process command line args
+verbose=0
+action="main"
+result=""
+notify=""
+args=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        (-v|--verbose)
+            verbose=$(($verbose + 1))
+            ;;
+        (-h|--help)
+            action="usage"
+            break
+            ;;
+        (-b|--before)
+            action="before"
+            ;;
+        (-a|--after)
+            if [ $# -lt 2 ]; then
+                action="usage"
+            else
+                action="after"
+                result="$2"
+                shift
+            fi
+            ;;
+        (-c|--changes)
+            action="changes"
+            ;;
+        (-n|--notify)
+            notify="$1"
+            ;;
+        (-*)
+            err "${program}: invalid option: $1"
+            action="usage"
+            ;;
+        (*)
+            if [ -z "$args" ]; then
+                args="$1"
+            else
+                args="$args $1"
+            fi
+            ;;
+    esac
+    shift
+done
+if [ -n "$args" ] ; then
+    err "${program}: extra args not supported"
+    action="usage"
+fi
+if [ ! -d ".git" ]; then
+    err "not in a git repo"
+    action="usage"
+fi
+if [ $verbose -gt 0 ]; then
+    printvars program dir cwd verbose action result notify
+fi
+if [ "$action" = "main" ]; then
+    verr "nothing to do"
+else
+    do_$action
+fi
+
+exit 0

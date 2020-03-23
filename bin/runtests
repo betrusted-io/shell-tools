@@ -39,7 +39,6 @@ while [ "$#" -gt 0 ]; do
             break
             ;;
         (-c|--script)
-            script="$1"
             if [ $# -lt 2 ]; then
                 action="usage"
             else
