@@ -22,6 +22,8 @@ usage: ${program} [OPTIONS]
            [-h,--help]           help
            [-b,--before]         record versions before test
            [-a,--after] RESULT   test result status
+           [-p,--prev]           show previous versions
+           [-C,--current]        show current versions
            [-c,--changes]        show version changes
            [-n,--notify]         send notifications on failure
 EOF
@@ -73,26 +75,85 @@ do_before() {
 }
 
 
+# show current versions
+do_current() {
+    vverr "-- current --"
+    local current
+    local current_ref
+    local url
+    current=".git-ci/current"
+    if [ ! -d "$current" ]; then
+        verr 'no changes to show (did you run --before?)'
+        return 1
+    fi
+    current_ref="$(cat $current/.ref)"
+    log "Current PROJECT ${current_ref}"
+    for sub in $(list_submodules); do
+        safe=$(submodule_escape $sub)
+        current_ref="$(cat $current/$safe.ref)"
+        log "SUBMODULE $sub @ $current_ref"
+    done
+}
+
+# show previous versions
+do_prev() {
+    vverr "-- prev --"
+    local prev
+    local prev_ref
+    local url
+    prev=".git-ci/prev"
+    if [ ! -d "$prev" ]; then
+        verr 'no changes to show (did you run --after?)'
+        return 1
+    fi
+    prev_ref="$(cat $prev/.ref)"
+    log "Previous PROJECT ${prev_ref}"
+    for sub in $(list_submodules); do
+        safe=$(submodule_escape $sub)
+        prev_ref="$(cat $prev/$safe.ref)"
+        log "SUBMODULE $sub @ $prev_ref"
+    done
+}
+
+# take a github remote origin and convert it to a project URL
+getorigin() {
+    local origin="$1"
+    local member="${origin##git@github.com:}"
+    if [ "$member" != "$origin" ]; then
+        # convert git@github.com: to https://github.com/
+        origin="https://github.com/$member"
+    fi
+    # remove .git suffix
+    origin="${origin%%.git}"
+    echo $origin
+}
+
 # show changes
 do_changes() {
     vverr "-- changes --"
     local current
     local prev
+    local current_ref
+    local prev_ref
     local url
     current=".git-ci/current"
     prev=".git-ci/prev"
     if [ ! -d "$current" ]; then
         verr 'no changes to show (did you run --before?)'
+        return 1
     fi
     if [ ! -d "$prev" ]; then
         verr 'no changes to show (did you run --after?)'
+        return 1
     fi
     prev_ref="$(cat $prev/.ref)"
     current_ref="$(cat $current/.ref)"
     if [ "$current_ref" = "$prev_ref" ]; then
         log "PROJECT UNCHANGED @ $current_ref"
     else
-        log "PROJECT ${prev_ref}..${current_ref}"
+        url=$(getorigin $(git remote get-url origin))
+        url="$url/compare/${prev_ref}..${current_ref}"
+        log "PROJECT $url"
     fi
     for sub in $(list_submodules); do
         safe=$(submodule_escape $sub)
@@ -101,11 +162,16 @@ do_changes() {
         if [ "$current_ref" = "$prev_ref" ]; then
             log "SUBMODULE $sub UNCHANGED @ $current_ref"
         else
-            url="$(git config --file .gitmodules --get submodule.$sub.url | sed 's/.git$//')"
+            url="$(git config --file .gitmodules --get submodule.$sub.url)"
+            url="${url%%.git}"
             url="$url/compare/${prev_ref}..${current_ref}"
             log "SUBMODULE $sub $url"
         fi
     done
+    if [ -n "$BUILD_URL" ]; then
+        log ""
+        log "See the full console log at $BUILD_URL/consoleFull"
+    fi
 }
 
 # after tests
@@ -113,6 +179,8 @@ do_after() {
     local current
     local prev
     local prev_result
+    local current_ref
+    local prev_ref
     vverr "-- after $result --"
     current=".git-ci/current"
     if [ ! -d "$current" ]; then
@@ -134,6 +202,19 @@ do_after() {
                 do_changes
                 if [ -n "$notify" ]; then
                     verr "sending notifications..."
+                    local subject="FAILED $(basename $cwd) SUBMODULE CHANGED: "
+                    for sub in $(list_submodules); do
+                        safe=$(submodule_escape $sub)
+                        prev_ref="$(cat $prev/$safe.ref)"
+                        current_ref="$(cat $current/$safe.ref)"
+                        if [ "$current_ref" != "$prev_ref" ]; then
+                            emails="$(git config --file .gitmodules --get submodule.$sub.notify)"
+                            if [ -n "$emails" ]; then
+                                log "SUBMODULE $sub changed, notifying: $emails"
+                                do_changes | mailx -s "$subject $sub" $emails
+                            fi
+                        fi
+                    done
                 fi
             else
                 verr "still failing"
@@ -173,8 +254,14 @@ while [ "$#" -gt 0 ]; do
                 shift
             fi
             ;;
+        (-p|--prev)
+            action="prev"
+            ;;
         (-c|--changes)
             action="changes"
+            ;;
+        (-C|--current)
+            action="current"
             ;;
         (-n|--notify)
             notify="$1"
