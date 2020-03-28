@@ -195,6 +195,23 @@ do_after() {
                 verr "still successful"
             else
                 verr "build fixed"
+                do_changes
+                if [ -n "$notify" ]; then
+                    verr "sending notifications..."
+                    local subject="FIXED $(basename $cwd) SUBMODULE CHANGED: "
+                    for sub in $(list_submodules); do
+                        safe=$(submodule_escape $sub)
+                        prev_ref="$(cat $prev/$safe.ref)"
+                        current_ref="$(cat $current/$safe.ref)"
+                        if [ "$current_ref" != "$prev_ref" ]; then
+                            emails="$(git config --file .gitmodules --get submodule.$sub.notify)"
+                            if [ -n "$emails" ]; then
+                                log "SUBMODULE $sub changed, notifying: $emails"
+                                do_changes | mailx -s "$subject $sub" $emails
+                            fi
+                        fi
+                    done
+                fi
             fi
         else
             if [ "$prev_result" = "0" ]; then
