@@ -2,8 +2,8 @@
 # common.sh
 # common shell functions
 # this file is intended to be source by other shell programs
-
 # print arguments to STDOUT
+
 log() {
     echo "$*"
 }
@@ -74,4 +74,45 @@ printvars() {
             err "$var=$value"
         fi
     done
+}
+
+# returns the number of argumets
+args_size() {
+    echo $#
+}
+
+# returns true if WORD is a member of ARGS
+member_of() {
+    [ $# -lt 2 ] && err "usage: member_of WORD ARGS..." && return 1
+    local word="$1"
+    local member=1
+    local arg
+    shift
+    for arg in $*; do
+        if [ "$arg" = "$word" ]; then
+            return 0
+        fi
+    done
+    return $member
+}
+
+# removes WORD from ARGS
+remove_arg() {
+    [ $# -lt 2 ] && err "usage: remove_arg WORD ARGS..." && return 1
+    local word="$1"
+    local member=1
+    local arg
+    local args=""
+    shift
+    for arg in $*; do
+        if [ "$arg" != "$word" ]; then
+            if [ -z "$args" ]; then
+                args="$arg"
+            else
+                args="$args $arg"
+            fi
+        fi
+    done
+    echo $args
+    return 0
 }

@@ -34,13 +34,31 @@ tests and `get-ci --after $?` after running tests.
 ```
 usage: git-ci [OPTIONS]
        OPTIONS
-           [-v,--verbose]        verbose
-           [-h,--help]           help
-           [-b,--before]         record versions before test
            [-a,--after] RESULT   test result status
+           [-A,--notify-add] SUB EMAIL add notifications for submodule
+           [-b,--before]         record versions before test
            [-c,--changes]        show version changes
+           [-C,--current]        show current versions
+           [-D,--notify-delete] SUB EMAIL delete notifications for submodule
+           [-h,--help]           help
+           [-l,--list]           list submodules
+           [-L,--notify-list] SUB...  list notifications for submodule(s)
            [-n,--notify]         send notifications on failure
+           [-p,--prev]           show previous versions
+           [-v,--verbose]        verbose
 ```
+
+#### list submodule notifications
+
+`git-ci --notify-list $(git-ci --list)`
+
+#### add a submodule notification
+
+`git-ci --verbose --notify-add deps/litex me@gmail.com`
+
+#### delete a submodule notification
+
+`git-ci --verbose --notify-delete deps/litex me@gmail.com`
 
 ### exitwith
 

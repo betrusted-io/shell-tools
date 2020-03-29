@@ -18,14 +18,18 @@ do_usage() {
   cat >&2 << EOF
 usage: ${program} [OPTIONS]
        OPTIONS
-           [-v,--verbose]        verbose
-           [-h,--help]           help
-           [-b,--before]         record versions before test
            [-a,--after] RESULT   test result status
-           [-p,--prev]           show previous versions
-           [-C,--current]        show current versions
+           [-A,--notify-add] SUB EMAIL add notifications for submodule
+           [-b,--before]         record versions before test
            [-c,--changes]        show version changes
+           [-C,--current]        show current versions
+           [-D,--notify-delete] SUB EMAIL delete notifications for submodule
+           [-h,--help]           help
+           [-l,--list]           list submodules
+           [-L,--notify-list] SUB...  list notifications for submodule(s)
            [-n,--notify]         send notifications on failure
+           [-p,--prev]           show previous versions
+           [-v,--verbose]        verbose
 EOF
     exit 1
 }
@@ -42,10 +46,56 @@ submodule_unescape() {
 }
 
 # list submodules
-list_submodules() {
+do_list() {
     if [ -r ".gitmodules" ]; then
         git config --file ".gitmodules" --get-regexp url | cut -d. -f2
     fi
+}
+
+# list notification for submodule(s)
+do_notify_list() {
+    [ $# -lt 1 ] && err "usage: do_notify_list SUB.." && return 1
+    local notify
+    for sub in $*; do
+        notify=$(git config --file .gitmodules --get "submodule.$sub.notify")
+        printf "%s\t%s\n" "$sub" "$notify"
+    done
+}
+
+# add notification for submodule
+do_notify_add() {
+    [ $# -ne 2 ] && err "usage: do_notify_add SUB EMAIL" && return 1
+    local sub="$1"
+    local email="$2"
+    local notify
+    if member_of "$sub" $(do_list) ; then
+        notify=$(git config --file .gitmodules --get "submodule.$sub.notify")
+        notify="$notify $email"
+        verr "setting notifications for $sub to $notify"
+        git config --file .gitmodules --add "submodule.$sub.notify" "$notify"
+    else
+        err "do_notify_add: not a submodule: $sub"
+        return 1
+    fi
+    return 0
+}
+
+# delete notification for submodule
+do_notify_delete() {
+    [ $# -ne 2 ] && err "usage: do_notify_delete SUB EMAIL" && return 1
+    local sub="$1"
+    local email="$2"
+    local notify
+    if member_of "$sub" $(do_list) ; then
+        notify=$(git config --file .gitmodules --get "submodule.$sub.notify")
+        notify=$(remove_arg "$email" "$notify")
+        verr "setting notifications for $sub to $notify"
+        git config --file .gitmodules --add "submodule.$sub.notify" "$notify"
+    else
+        err "do_notify_delete: not a submodule: $sub"
+        return 1
+    fi
+    return 0
 }
 
 # before tests
@@ -65,7 +115,7 @@ do_before() {
     reffile="$current/.ref"
     echo "$ref" > "$reffile"
     verr "PROJECT @ $ref "
-    for sub in $(list_submodules); do
+    for sub in $(do_list); do
         safe=$(submodule_escape $sub)
         ref="$(git -C $sub rev-parse @)"
         reffile="$current/$safe.ref"
@@ -88,7 +138,7 @@ do_current() {
     fi
     current_ref="$(cat $current/.ref)"
     log "Current PROJECT ${current_ref}"
-    for sub in $(list_submodules); do
+    for sub in $(do_list); do
         safe=$(submodule_escape $sub)
         current_ref="$(cat $current/$safe.ref)"
         log "SUBMODULE $sub @ $current_ref"
@@ -108,7 +158,7 @@ do_prev() {
     fi
     prev_ref="$(cat $prev/.ref)"
     log "Previous PROJECT ${prev_ref}"
-    for sub in $(list_submodules); do
+    for sub in $(do_list); do
         safe=$(submodule_escape $sub)
         prev_ref="$(cat $prev/$safe.ref)"
         log "SUBMODULE $sub @ $prev_ref"
@@ -155,7 +205,7 @@ do_changes() {
         url="$url/compare/${prev_ref}..${current_ref}"
         log "PROJECT $url"
     fi
-    for sub in $(list_submodules); do
+    for sub in $(do_list); do
         safe=$(submodule_escape $sub)
         prev_ref="$(cat $prev/$safe.ref)"
         current_ref="$(cat $current/$safe.ref)"
@@ -170,7 +220,7 @@ do_changes() {
     done
     if [ -n "$BUILD_URL" ]; then
         log ""
-        log "See the full console log at $BUILD_URL/consoleFull"
+        log "See the full console log at ${BUILD_URL%/}/consoleFull"
     fi
 }
 
@@ -199,7 +249,7 @@ do_after() {
                 if [ -n "$notify" ]; then
                     verr "sending notifications..."
                     local subject="FIXED $(basename $cwd) SUBMODULE CHANGED: "
-                    for sub in $(list_submodules); do
+                    for sub in $(do_list); do
                         safe=$(submodule_escape $sub)
                         prev_ref="$(cat $prev/$safe.ref)"
                         current_ref="$(cat $current/$safe.ref)"
@@ -220,7 +270,7 @@ do_after() {
                 if [ -n "$notify" ]; then
                     verr "sending notifications..."
                     local subject="FAILED $(basename $cwd) SUBMODULE CHANGED: "
-                    for sub in $(list_submodules); do
+                    for sub in $(do_list); do
                         safe=$(submodule_escape $sub)
                         prev_ref="$(cat $prev/$safe.ref)"
                         current_ref="$(cat $current/$safe.ref)"
@@ -249,19 +299,11 @@ verbose=0
 action="main"
 result=""
 notify=""
+minargs=0 # needs at least this many args
+maxargs=0 # handles at most this many args
 args=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        (-v|--verbose)
-            verbose=$(($verbose + 1))
-            ;;
-        (-h|--help)
-            action="usage"
-            break
-            ;;
-        (-b|--before)
-            action="before"
-            ;;
         (-a|--after)
             if [ $# -lt 2 ]; then
                 action="usage"
@@ -271,8 +313,13 @@ while [ "$#" -gt 0 ]; do
                 shift
             fi
             ;;
-        (-p|--prev)
-            action="prev"
+        (-A|--notify-add)
+            minargs=2
+            maxargs=2
+            action="notify_add"
+            ;;
+        (-b|--before)
+            action="before"
             ;;
         (-c|--changes)
             action="changes"
@@ -280,8 +327,32 @@ while [ "$#" -gt 0 ]; do
         (-C|--current)
             action="current"
             ;;
+        (-D|--notify-delete)
+            minargs=2
+            maxargs=2
+            action="notify_delete"
+            ;;
+        (-h|--help)
+            action="usage"
+            break
+            ;;
+        (-l|--list)
+            action="list"
+            break
+            ;;
+        (-L|--notify-list)
+            minargs=1
+            maxargs=100
+            action="notify_list"
+            ;;
         (-n|--notify)
             notify="$1"
+            ;;
+        (-p|--prev)
+            action="prev"
+            ;;
+        (-v|--verbose)
+            verbose=$(($verbose + 1))
             ;;
         (-*)
             err "${program}: invalid option: $1"
@@ -297,9 +368,14 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-if [ -n "$args" ] ; then
-    err "${program}: extra args not supported"
+if [ $(args_size $args) -lt $minargs ]; then
+    err "${program}: $action needs at least $minargs args"
     action="usage"
+else
+    if [ $(args_size $args) -gt $maxargs ]; then
+        err "${program}: $action takes at most $maxargs args"
+        action="usage"
+    fi
 fi
 if [ ! -d ".git" ]; then
     err "not in a git repo"
@@ -311,7 +387,7 @@ fi
 if [ "$action" = "main" ]; then
     verr "nothing to do"
 else
-    do_$action
+    do_$action $args
 fi
 
 exit 0
